@@ -1,0 +1,13 @@
+#!/bin/bash
+
+keyword="$1"
+if [[ -z "$keyword" ]]
+then
+	echo "Ex: deskfind 'Calculator'"
+else
+	paths=$(locate "*.desktop" | while read line; do echo "'$(dirname "$line")'"; done | sort -u)
+	#echo "Path=$paths"
+	cmd=$(echo "grep --include=\\*.desktop -rnw "$paths" -e '$1'")
+	#echo "Cmd: $cmd"
+	eval $cmd | while read line; do echo ${line}|grep -o .*\.desktop; done | sort -u
+fi
