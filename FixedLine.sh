@@ -1,6 +1,6 @@
 #!/bin/sh
 
-items=`xdotool search -class "line.exe"`
+items=`xdotool search -classname "LINE"`
 
 isFocuses=0
 for item in $items
