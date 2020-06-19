@@ -1,48 +1,70 @@
-#!/bin/sh
+#!/bin/bash
 
-items=`xdotool search -classname "LINE"`
-
-isFocuses=0
-for item in $items
-do
-  wmState=`xprop -id $item _NET_WM_STATE`
-  if [[ $wmState == *"_NET_WM_STATE_FOCUSED"* ]]
-  then
-    echo $item: $wmState
-    isFocuses=1
-    break
-  fi
-done
-
-for item in $items
-do
-  widthGrep=`xwininfo -id $item | grep -e "Width:"`
-  widths=`echo $widthGrep | sed "s/^Width: \(.*\)$/\1/"`
-  for width in $widths
-  do
-    if [ $width -eq 11 ]
+while true ; do
+    unset shows
+    unset hides
+    items1=$(xdotool search -class "line.exe")
+    items2=$(xdotool search -class "linemediaplayer.exe")
+    items=$(echo $items1 $items2)
+    for item in $items
+    do
+        wmName=$(xprop -id "$item" WM_NAME)
+        pat="\".*\""
+        if [[ $wmName =~ $pat ]]
+        then
+            #echo "$item": $wmName
+            mapState=$(xwininfo -id "$item" | grep "Map State")
+            if [[ $mapState == *"IsViewable"* ]]
+            then
+                #echo "$item": "$wmName", "$mapState"
+                #xprop -spy -id $item _NET_WM_STATE &
+                wmState=$(xprop -id "$item" _NET_WM_STATE)
+                if [[ $wmState == *"_NET_WM_STATE_FOCUSED"* ]]
+                then
+                    shows=$(echo "$shows" "$item")
+                else
+                    hides=$(echo "$hides" "$item")
+                fi
+            fi
+        fi
+    done
+    if [ "$lastShows" != "$shows" ]
     then
-      if [ $isFocuses -eq 1 ]
-      then
-        xdotool windowmap $item
-      else
-        xdotool windowunmap $item
-      fi
+        if [ -n "$shows" ]
+        then
+            echo SHOWS \("$shows" \)
+            unset borders
+            edge=$(($shows+10))
+            for ((i=$edge; i<$(($edge+16)); i+=2))
+            do
+                borders=$(echo $borders $i)
+            done
+            #echo SHOWING BORDERS "$borders"
+            for border in $borders
+            do
+                xdotool windowmap $border
+            done
+        fi
+        lastShows=$shows
     fi
-  done
-  
-  heightGrep=`xwininfo -id $item | grep -e "Height:"`
-  heights=`echo $heightGrep | sed "s/^Height: \(.*\)$/\1/"`
-  for height in $heights
-  do
-    if [ $heights -eq 11 ]
+    if [ "$lastHides" != "$hides" ]
     then
-      if [ $isFocuses -eq 1 ]
-      then
-        xdotool windowmap $item
-      else
-        xdotool windowunmap $item
-      fi
+        echo HIDES \("$hides" \)
+        unset borders
+        for item in $hides
+        do
+            edge=$(($item+10))
+            for ((i=$edge; i<$(($edge+16)); i+=2))
+            do
+                borders=$(echo $borders $i)
+            done
+            for border in $borders
+            do
+                xdotool windowunmap $border
+                #echo "$border"
+            done
+        done
+        lastHides=$hides
     fi
-  done
+    sleep 1
 done
