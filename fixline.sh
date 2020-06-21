@@ -1,7 +1,5 @@
 #!/bin/bash
 
-unset _show
-
 #nohup ./fixline.sh </dev/null &>/dev/null &
 # main loop
 while true
