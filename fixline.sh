@@ -59,7 +59,7 @@ do
                 fi
             done
         fi
-        echo $borders
+        echo "$borders"
     }
     
     # on changed
@@ -92,7 +92,7 @@ do
             then
                 for border in $hideBorders
                 do
-                    xdotool windowunmap $border &
+                    xdotool windowunmap "$border" &
                 done
             fi
         fi
@@ -106,19 +106,19 @@ do
             then
                 for border in $hideBorders
                 do
-                    xdotool windowunmap $border &
+                    xdotool windowunmap "$border" &
                 done
             fi
             
             unset skip
-            echo SHOW $addressShow
+            echo SHOW "$addressShow"
             address=$addressShow
             showBorders=$(getBorders)
             if [ -n "$showBorders" ]
             then
                 for border in $showBorders
                 do
-                    xdotool windowmap $border &
+                    xdotool windowmap "$border" &
                 done
             fi
         fi
