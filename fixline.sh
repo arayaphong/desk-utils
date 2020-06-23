@@ -10,9 +10,7 @@ do
     getWindows() {
         unset show
         unset windows
-        items1=$(xdotool search -class "line.exe")
-        items2=$(xdotool search -class "linemediaplayer.exe")
-        items="$items1 $items2"
+        items=$(xdotool search -class "line.*.exe")
         for item in $items
         do
             #echo xprop -id  "$item" WM_NAME
@@ -99,6 +97,7 @@ do
         if [ -n "$addressShow" ]
         then
             echo HIDE SOMES
+            local skip
             address=$windows
             skip=$addressShow
             hideBorders=$(getBorders)
