@@ -10,7 +10,7 @@ do
     getWindows() {
         unset show
         unset windows
-        items=$(xdotool search -class "line.*.exe")
+        items=$(xdotool search -classname "line.*.exe")
         for item in $items
         do
             #echo xprop -id  "$item" WM_NAME
