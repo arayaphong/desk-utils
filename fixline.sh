@@ -52,14 +52,14 @@ showHide() {
     echo SHOW "$show"
     address="$(getBorders "$show")"
     for addr in $address; do
-      xdotool windowmap "$addr"
+      xdotool windowmap "$addr" &
     done
   fi
   if [ -n "$all" ]; then
     echo ALL "$all"
     address="$(getBorders "$all" "$show")"
     for addr in $address; do
-      xdotool windowunmap "$addr"
+      xdotool windowunmap "$addr" &
     done
   fi
 }
