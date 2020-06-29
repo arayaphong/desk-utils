@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# run in background with this command
+# nohup ./fixline.sh </dev/null &>/dev/null &
+
 getWindows() {
   local focus
   local windows
