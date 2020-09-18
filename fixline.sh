@@ -71,8 +71,10 @@ do
                 then
                     if [[ $item2 == *$addr* ]]
                     then
+                        #linemediaplayer
                         edgeAndCorner=$((addr+14))
                     else
+                        #LINE.exe
                         edgeAndCorner=$((addr+10))
                     fi
                     for ((i=edgeAndCorner; i<$((edgeAndCorner+16)); i+=2))
