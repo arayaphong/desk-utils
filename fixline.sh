@@ -11,29 +11,48 @@ do
         unset show
         unset windows
         #items="${lIds[*]} ${lmIds[*]}"
-        items=$(xdotool search --pid $(pgrep LINE.exe) --sync)
-        for item in $items
-        do
-            xwininfo -id "$item" > /tmp/xWinInfo & wait $!
-            isError=$(echo $?)
-            if [ "$isError" -eq "1" ]
+        pid=$(pgrep LINE.exe)
+        if [ -z "$pid" ]
+        then
+            return 1
+        else
+            item1=$(xdotool search --pid "$pid" --sync)
+            unset item2
+            pids=($(pgrep linemediaplayer))
+            if [ ${#pids[@]} -ge "3" ]
             then
-                break
+                for pid in "${pids[@]}"
+                do
+                    wids=($(xdotool search --pid "$pid" --sync))
+                    if [ ${#wids[@]} -gt "2" ]
+                    then
+                        #echo "Has Viewer id: $(echo "obase=16; ${wids[2]}" | bc)"
+                        item2=$(echo "$item2 ${wids[@]}" | xargs)
+                    fi
+                done
             fi
-            xWinInfo=$(cat /tmp/xWinInfo)
-	    mapState=$(echo "$xWinInfo" | grep "Map State")
-	    if [[ $mapState == *"IsViewable"* ]]
-	    then
-	        #xprop -spy -id $item _NET_WM_STATE &
-	        windows="$windows $item"
-	        windows=$(echo "$windows" | xargs)
-	        wmState=$(xprop -id "$item" _NET_WM_STATE)
-	        if [[ $wmState == *"_NET_WM_STATE_FOCUSED"* ]]
-	        then
-	            show="$item"
-	        fi
-	    fi
-        done
+            items=$(echo "$item1 $item2" | xargs)
+            for item in $items
+            do
+                xwininfo -id "$item" > /tmp/xWinInfo & wait $!
+                if [ $? -eq "1" ]
+                then
+                    break
+                fi
+                xWinInfo=$(cat /tmp/xWinInfo)
+                mapState=$(echo "$xWinInfo" | grep "Map State")
+                if [[ $mapState == *"IsViewable"* ]]
+                then
+                    #xprop -spy -id $item _NET_WM_STATE &
+                    windows=$(echo "$windows $item" | xargs)
+                    wmState=$(xprop -id "$item" _NET_WM_STATE)
+                    if [[ $wmState == *"_NET_WM_STATE_FOCUSED"* ]]
+                    then
+                        show="$item"
+                    fi
+                fi
+            done
+        fi
     }
     
     # collect all edges and corners
@@ -50,15 +69,20 @@ do
             do
                 if [ "$addr" != "$skip" ]
                 then
-                    edgeAndCorner=$((addr+10))
+                    if [[ $item2 == *$addr* ]]
+                    then
+                        edgeAndCorner=$((addr+14))
+                    else
+                        edgeAndCorner=$((addr+10))
+                    fi
                     for ((i=edgeAndCorner; i<$((edgeAndCorner+16)); i+=2))
                     do
-                        borders="$borders $i"
+                        borders=$(echo "$borders $i" | xargs)
                     done
                 fi
             done
+            echo $borders
         fi
-        echo "$borders"
     }
     
     # on changed
@@ -92,8 +116,7 @@ do
                 for border in $hideBorders
                 do
                     xdotool windowunmap "$border" & wait $!
-                    isError=$(echo $?)
-                    if [ "$isError" -eq "1" ]
+                    if [ $? -eq "1" ]
                     then
                         break
                     fi
@@ -111,8 +134,7 @@ do
                 for border in $hideBorders
                 do
                     xdotool windowunmap "$border" & wait $!
-                    isError=$(echo $?)
-                    if [ "$isError" -eq "1" ]
+                    if [ $? -eq "1" ]
                     then
                         break
                     fi
@@ -128,8 +150,7 @@ do
                 for border in $showBorders
                 do
                     xdotool windowmap "$border" & wait $!
-                    isError=$(echo $?)
-                    if [ "$isError" -eq "1" ]
+                    if [ $? -eq "1" ]
                     then
                         break
                     fi
@@ -137,9 +158,14 @@ do
             fi
         fi
     }
-    
     getWindows
-    onChanged
-    doShowOrHide
-    sleep .100   # untight process running
+    if [ $? -eq "1" ]
+    then
+        echo "No process LINE.exe running found!"
+        sleep 3
+    else
+        onChanged
+        doShowOrHide
+        sleep .5   # untight process running
+    fi
 done
