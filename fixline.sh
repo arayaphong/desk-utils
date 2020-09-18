@@ -1,76 +1,145 @@
 #!/bin/bash
 
-# run in background with this command
-# nohup ./fixline.sh </dev/null &>/dev/null &
-
-getWindows() {
-  local focus
-  local windows
-  local items=$(xdotool search -classname "line.*.exe")
-  for item in $items; do
-    item=$(printf '0x%x' "$item")
-    wmName=$(xprop -id "$item" WM_NAME)
-    pat="\".*\""
-    if [[ $wmName =~ $pat ]]; then
-      mapState=$(xwininfo -id "$item" | grep "Map State")
-      if [[ $mapState == *"IsViewable"* ]]; then
-        windows="$windows $item"
-        windows=$(echo "$windows" | xargs)
-        wmState=$(xprop -id "$item" _NET_WM_STATE)
-        if [[ $wmState == *"_NET_WM_STATE_FOCUSED"* ]]; then
-          focus=$item
-        fi
-      fi
-    fi
-  done
-  echo "$focus","$windows"
-}
-getBorders() {
-  local skip="$2"
-  local borders
-  local address
-  address=$(echo "$1" | xargs -n1 | sort -g | xargs)
-  if [ -n "$address" ]; then
-    for addr in $address; do
-      if [ "$addr" != "$skip" ]; then
-        edgeAndCorner=$((addr + 10))
-        for ((i = edgeAndCorner; i < $((edgeAndCorner + 16)); i += 2)); do
-          borders="$borders $i"
-        done
-      fi
-    done
-  fi
-  echo "$borders"
-}
-showHide() {
-  local all
-  local show
-  show=$(echo "$1" | sed -n "s/,.*$//p")
-  all=$(echo "$1" | sed -n "s/^.*,//p")
-  #clear
-  if [ -n "$show" ]; then
-    echo SHOW "$show"
-    address="$(getBorders "$show")"
-    for addr in $address; do
-      xdotool windowmap "$addr" &
-    done
-  fi
-  if [ -n "$all" ]; then
-    echo ALL "$all"
-    address="$(getBorders "$all" "$show")"
-    for addr in $address; do
-      xdotool windowunmap "$addr" &
-    done
-  fi
-}
-
-unset lastResult
+#nohup ./fixline.sh </dev/null &>/dev/null &
 # main loop
-while true; do
-  result=$(getWindows)
-  if [ "$lastResult" != "$result" ]; then
-    showHide "$result"
-    lastResult="$result"
-  fi
-  #sleep 1 # lengthen process running
+while true
+do
+    # find active windows
+    # input ($lIds, $lmIds)
+    # output ($show, $windows)
+    getWindows() {
+        unset show
+        unset windows
+        #items="${lIds[*]} ${lmIds[*]}"
+        items=$(xdotool search --pid $(pgrep LINE.exe) --sync)
+        for item in $items
+        do
+            xwininfo -id "$item" > /tmp/xWinInfo & wait $!
+            isError=$(echo $?)
+            if [ "$isError" -eq "1" ]
+            then
+                break
+            fi
+            xWinInfo=$(cat /tmp/xWinInfo)
+	    mapState=$(echo "$xWinInfo" | grep "Map State")
+	    if [[ $mapState == *"IsViewable"* ]]
+	    then
+	        #xprop -spy -id $item _NET_WM_STATE &
+	        windows="$windows $item"
+	        windows=$(echo "$windows" | xargs)
+	        wmState=$(xprop -id "$item" _NET_WM_STATE)
+	        if [[ $wmState == *"_NET_WM_STATE_FOCUSED"* ]]
+	        then
+	            show="$item"
+	        fi
+	    fi
+        done
+    }
+    
+    # collect all edges and corners
+    # input ($address, $skip)
+    # output ($border)
+    getBorders() {
+        unset borders
+        #echo ADDRESS\($address\)
+        address=$(echo "$address" | xargs -n1 | sort -g | xargs)
+        if [ -n "$address" ]
+        then
+            #echo SKIP $skip
+            for addr in $address
+            do
+                if [ "$addr" != "$skip" ]
+                then
+                    edgeAndCorner=$((addr+10))
+                    for ((i=edgeAndCorner; i<$((edgeAndCorner+16)); i+=2))
+                    do
+                        borders="$borders $i"
+                    done
+                fi
+            done
+        fi
+        echo "$borders"
+    }
+    
+    # on changed
+    onChanged() {
+        unset addressHide
+        unset addressShow
+        if [ "$_show" != "$show" ]
+        then
+            if [ -z "$show" ]
+            then
+                addressHide=$_show
+            else
+                if [ -n "$_show" ]
+                then
+                    addressHide=$_show
+                fi
+                addressShow=$show
+            fi
+            _show=$show
+        fi
+    }
+    
+    doShowOrHide() {
+        if [ -n "$addressHide" ]
+        then
+            echo HIDE ALL
+            address=$windows
+            hideBorders=$(getBorders)
+            if [ -n "$hideBorders" ]
+            then
+                for border in $hideBorders
+                do
+                    xdotool windowunmap "$border" & wait $!
+                    isError=$(echo $?)
+                    if [ "$isError" -eq "1" ]
+                    then
+                        break
+                    fi
+                done
+            fi
+        fi
+        if [ -n "$addressShow" ]
+        then
+            echo HIDE SOMES
+            address=$windows
+            skip=$addressShow
+            hideBorders=$(getBorders)
+            if [ -n "$hideBorders" ]
+            then
+                for border in $hideBorders
+                do
+                    xdotool windowunmap "$border" & wait $!
+                    isError=$(echo $?)
+                    if [ "$isError" -eq "1" ]
+                    then
+                        break
+                    fi
+                done
+            fi
+            
+            unset skip
+            echo SHOW "$addressShow"
+            address=$addressShow
+            showBorders=$(getBorders)
+            if [ -n "$showBorders" ]
+            then
+                for border in $showBorders
+                do
+                    xdotool windowmap "$border" & wait $!
+                    isError=$(echo $?)
+                    if [ "$isError" -eq "1" ]
+                    then
+                        break
+                    fi
+                done
+            fi
+        fi
+    }
+    
+    getWindows
+    onChanged
+    doShowOrHide
+    sleep .100   # untight process running
 done
