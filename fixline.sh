@@ -1,167 +1,122 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# border-manager-improved.sh — Show/hide Wine edge-/corner-windows that act as borders
+# -----------------------------------------------------------------------------
+# * Case‑insensitive WM_CLASS matching
+# * Toggle debug logging with -d
+# * Custom BORDER_INCREMENT via -i
+# * SIGINT/SIGTERM cleanup
+# * shellcheck‑clean & safer error handling
+#
+# NOTE: IFS now includes a space so that `read` splits "13 15" correctly.
+# -----------------------------------------------------------------------------
 
-# Configuration for different applications
+set -uo pipefail       # keep -u/o; omit -e so non‑zero cmds don't kill loop
+IFS=$' \n\t'            # include <space> to let `read -r a b <<< "10 20"` split
+
+# ──────────────────────────────  Global defaults  ─────────────────────────────
+LOG_LEVEL="info"
+BORDER_INCREMENT=4  # can be overridden via -i
+
+# Declare per‑application EDGE_OFFSET and CORNER_OFFSET
+#   key = WM_CLASS  (lower‑case, no quotes)
 declare -A APP_CONFIGS=(
-    ["linemediaplayer.exe"]="13 15"  # EDGE_OFFSET CORNER_OFFSET
-    ["line.exe"]="10 20"             # EDGE_OFFSET CORNER_OFFSET
-    # Add more applications as needed
+    [linemediaplayer.exe]="13 15"
+    [line.exe]="10 20"
 )
 
-readonly BORDER_INCREMENT=4  # Common increment for all applications
-
-# Variables for tracking windows
-declare -i current_id=0
-declare -a edge_ids=()
-declare -a corner_ids=()
-declare current_app=""
-
-# Function to show window borders
-show_borders() {
-    echo "SHOW $current_app: ($current_id)"
-    # Show edge borders
-    for edge_id in "${edge_ids[@]}"; do
-        xdotool windowmap "$edge_id" 2>/dev/null || true
-    done
-    # Show corner borders
-    for corner_id in "${corner_ids[@]}"; do
-        xdotool windowmap "$corner_id" 2>/dev/null || true
-    done
+# ──────────────────────────────  Logging helpers  ─────────────────────────────
+log() {
+    local level="$1" msg="$2"
+    case $level in debug) lvl=0;; info) lvl=1;; warn) lvl=2;; error) lvl=3;; esac
+    case $LOG_LEVEL in debug) want=0;; info) want=1;; warn) want=2;; error) want=3;; esac
+    (( lvl >= want )) && printf '%s: %s\n' "${level^^}" "$msg" >&2
 }
 
-# Function to hide window borders
-hide_borders() {
-    echo "HIDE $current_app: ($current_id)"
-    # Hide edge borders
-    for edge_id in "${edge_ids[@]}"; do
-        xdotool windowunmap "$edge_id" 2>/dev/null || true
-    done
-    # Hide corner borders
-    for corner_id in "${corner_ids[@]}"; do
-        xdotool windowunmap "$corner_id" 2>/dev/null || true
-    done
+debug() { log debug "$*"; }
+info()  { log info  "$*"; }
+warn()  { log warn  "$*"; }
+error() { log error "$*"; }
+
+# ────────────────────────────────  CLI options  ───────────────────────────────
+usage() {
+    cat <<EOF
+Usage: $0 [-d] [-i increment]
+  -d            Enable debug logging
+  -i increment  Border-ID increment (default $BORDER_INCREMENT)
+EOF
+    exit 1
 }
 
-# Calculate edge and corner window IDs based on the main window ID and app config
+while getopts ':di:' opt; do
+    case $opt in
+        d) LOG_LEVEL="debug" ;;
+        i) BORDER_INCREMENT="$OPTARG" ;;
+        *) usage ;;
+    esac
+done
+readonly BORDER_INCREMENT
+shift $((OPTIND - 1))
+
+# ──────────────────────────────  Helper functions  ────────────────────────────
+get_wm_class() {
+    xprop -id "$1" WM_CLASS 2>/dev/null | awk -F '"' '{print tolower($(NF-1))}'
+}
+
+window_exists() { xwininfo -id "$1" &>/dev/null; }
+
 calculate_border_ids() {
-    local main_id="$1"
-    local app_name="$2"
-    
-    # Get app-specific offsets
-    read -r edge_offset corner_offset <<< "${APP_CONFIGS[$app_name]}"
-    
-    # Calculate edge IDs
-    edge_ids=()
-    local edge_top=$((main_id + edge_offset))
-    edge_ids+=("$edge_top")
-    for ((i=1; i<4; i++)); do
-        edge_ids+=("$((edge_top + i * BORDER_INCREMENT))")
-    done
-    
-    # Calculate corner IDs
-    corner_ids=()
-    local corner_first=$((main_id + corner_offset))
-    corner_ids+=("$corner_first")
-    for ((i=1; i<4; i++)); do
-        corner_ids+=("$((corner_first + i * BORDER_INCREMENT))")
+    local main_id="$1" app_key="$2" edge_offset corner_offset
+    read -r edge_offset corner_offset <<< "${APP_CONFIGS[$app_key]}"
+    edge_ids=(); corner_ids=()
+    for ((i=0;i<4;i++)); do
+        edge_ids+=("$((main_id + edge_offset + i * BORDER_INCREMENT))")
+        corner_ids+=("$((main_id + corner_offset + i * BORDER_INCREMENT))")
     done
 }
 
-# Check if window exists and is valid
-window_exists() {
-    local win_id="$1"
-    xwininfo -id "$win_id" &>/dev/null
-    return $?
-}
+map_ids()   { for id in "$@"; do xdotool windowmap   "$id" 2>/dev/null || true; done; }
+unmap_ids() { for id in "$@"; do xdotool windowunmap "$id" 2>/dev/null || true; done; }
 
-# Main function to handle window changes
-handle_window_change() {
-    local window_id="$1"
-    
-    # Get window properties
-    local xprop_output=$(xprop -id "$window_id" 2>/dev/null)
-    
-    # Extract WM_CLASS value - more robust pattern matching
-    local wm_class
-    wm_class=$(echo "$xprop_output" | grep -oP 'WM_CLASS\(STRING\) = ".*", "\K[^"]*')
-    
-    # If first method fails, try alternative extraction
-    if [[ -z "$wm_class" ]]; then
-        wm_class=$(echo "$xprop_output" | grep "WM_CLASS(STRING)" | awk -F '"' '{print $(NF-1)}')
-    fi
-    
-    # Debug output
-    echo "DEBUG: Window ID: $window_id, WM_CLASS: $wm_class" >&2
-    
-    # Check if this window belongs to any of our configured applications
-    if [[ -n "$wm_class" ]] && [[ -n "${APP_CONFIGS[$wm_class]}" ]]; then
-        # Convert hex to decimal
-        current_id=$((0x${window_id#0x}))
-        current_app="$wm_class"
-        
-        calculate_border_ids "$current_id" "$current_app"
-        
-        # Check if the first edge window exists before showing
-        if window_exists "${edge_ids[0]}"; then
-            show_borders
-        fi
-    else
-        # Not our window, hide borders if we have a current ID
-        if [[ $current_id -ne 0 ]]; then
-            calculate_border_ids "$current_id" "$current_app"
-            
-            # Check if the first edge window exists before hiding
-            if window_exists "${edge_ids[0]}"; then
-                hide_borders
-            fi
-            
-            # Reset tracking variables
-            current_id=0
-            current_app=""
-        fi
-    fi
-}
+show_borders() { info "SHOW $current_app ($current_id)";   map_ids   "${edge_ids[@]}"; map_ids   "${corner_ids[@]}"; }
+hide_borders() { info "HIDE $current_app ($current_id)";   unmap_ids "${edge_ids[@]}"; unmap_ids "${corner_ids[@]}"; }
 
-# Set up signal handling with cleaner shutdown
-cleanup() {
-    echo "Script terminating, cleaning up..."
-    # Hide any visible borders before exiting
-    if [[ $current_id -ne 0 ]]; then
-        calculate_border_ids "$current_id" "$current_app"
-        hide_borders
-    fi
-    exit 0
-}
-
+cleanup()   { info 'Cleaning up…'; [[ $current_id -ne 0 ]] && hide_borders; }
 trap cleanup SIGINT SIGTERM
 
-# Function to log errors
-log_error() {
-    echo "ERROR: $*" >&2
-}
-
-# Check for required commands
+# ────────────────────────────────  Sanity checks  ─────────────────────────────
 for cmd in xprop xdotool xwininfo; do
-    if ! command -v "$cmd" &>/dev/null; then
-        log_error "$cmd is required but not installed. Please install it first."
-        exit 1
-    fi
+    if ! command -v "$cmd" &>/dev/null; then error "$cmd is required"; exit 1; fi
 done
 
-# Display configuration
-echo "Border manager started with the following configurations:"
+info "Border manager started (increment=$BORDER_INCREMENT)"
 for app in "${!APP_CONFIGS[@]}"; do
-    read -r edge corner <<< "${APP_CONFIGS[$app]}"
-    echo "  $app: EDGE_OFFSET=$edge, CORNER_OFFSET=$corner"
+    read -r e c <<< "${APP_CONFIGS[$app]}"
+    info "  $app: EDGE=$e CORNER=$c"
 done
 
-# Monitor active window changes - fixed xprop command
-previous_window_id=""
+# ─────────────────────────────  Runtime variables  ────────────────────────────
+current_id=0 current_app="" prev_window=""
+edge_ids=() corner_ids=()
+
+shopt -s nocasematch
+
+# ───────────────────────────────  Event loop  ────────────────────────────────
+
 xprop -root -spy _NET_ACTIVE_WINDOW | while read -r line; do
-    current_window_id=$(echo "$line" | sed -n 's/^_NET_ACTIVE_WINDOW(WINDOW): window id # \(0x[0-9a-f]*\)/\1/p')
-    
-    # Only process if we have a valid window ID that's different from the previous one
-    if [[ -n "$current_window_id" && "$current_window_id" != "$previous_window_id" ]]; then
-        handle_window_change "$current_window_id"
-        previous_window_id="$current_window_id"
+    active_hex=$(sed -n 's/^_NET_ACTIVE_WINDOW(WINDOW): window id # \(0x[0-9a-f]*\)/\1/p' <<< "$line")
+    [[ -z "$active_hex" || "$active_hex" == "$prev_window" ]] && continue
+
+    wm_class=$(get_wm_class "$active_hex")
+    debug "Active=$active_hex class=$wm_class"
+
+    if [[ -n "$wm_class" && -n "${APP_CONFIGS[$wm_class]:-}" ]]; then
+        current_id=$((16#${active_hex#0x}))
+        current_app="$wm_class"
+        calculate_border_ids "$current_id" "$current_app"
+        window_exists "${edge_ids[0]}" && show_borders
+    else
+        [[ $current_id -ne 0 ]] && window_exists "${edge_ids[0]}" && hide_borders
+        current_id=0 current_app=""
     fi
+    prev_window="$active_hex"
 done
