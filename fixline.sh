@@ -77,16 +77,8 @@ window_exists() {
 handle_window_change() {
     local window_id="$1"
     
-    # Skip invalid window IDs
-    if [[ "$window_id" == "0x0" ]]; then
-        return
-    fi
-    
     # Get window properties
-    local xprop_output
-    if ! xprop_output=$(xprop -id "$window_id" 2>/dev/null); then
-        return
-    fi
+    local xprop_output=$(xprop -id "$window_id" 2>/dev/null)
     
     # Extract WM_CLASS value - more robust pattern matching
     local wm_class
@@ -111,8 +103,6 @@ handle_window_change() {
         # Check if the first edge window exists before showing
         if window_exists "${edge_ids[0]}"; then
             show_borders
-        else
-            echo "WARNING: Border windows for $current_app ($current_id) not found" >&2
         fi
     else
         # Not our window, hide borders if we have a current ID
