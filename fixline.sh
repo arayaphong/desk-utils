@@ -1,173 +1,177 @@
 #!/bin/bash
 
-#nohup ./fixline.sh </dev/null &>/dev/null &
-# main loop
-while true
-do
-    # find active windows
-    # input ($lIds, $lmIds)
-    # output ($show, $windows)
-    getWindows() {
-        unset show
-        unset windows
-        #items="${lIds[*]} ${lmIds[*]}"
-        pid=$(pgrep LINE.exe)
-        if [ -z "$pid" ]
-        then
-            return 1
+# Configuration for different applications
+declare -A APP_CONFIGS=(
+    ["linemediaplayer.exe"]="13 15"  # EDGE_OFFSET CORNER_OFFSET
+    ["line.exe"]="10 20"             # EDGE_OFFSET CORNER_OFFSET
+    # Add more applications as needed
+)
+
+readonly BORDER_INCREMENT=4  # Common increment for all applications
+
+# Variables for tracking windows
+declare -i current_id=0
+declare -a edge_ids=()
+declare -a corner_ids=()
+declare current_app=""
+
+# Function to show window borders
+show_borders() {
+    echo "SHOW $current_app: ($current_id)"
+    # Show edge borders
+    for edge_id in "${edge_ids[@]}"; do
+        xdotool windowmap "$edge_id" 2>/dev/null || true
+    done
+    # Show corner borders
+    for corner_id in "${corner_ids[@]}"; do
+        xdotool windowmap "$corner_id" 2>/dev/null || true
+    done
+}
+
+# Function to hide window borders
+hide_borders() {
+    echo "HIDE $current_app: ($current_id)"
+    # Hide edge borders
+    for edge_id in "${edge_ids[@]}"; do
+        xdotool windowunmap "$edge_id" 2>/dev/null || true
+    done
+    # Hide corner borders
+    for corner_id in "${corner_ids[@]}"; do
+        xdotool windowunmap "$corner_id" 2>/dev/null || true
+    done
+}
+
+# Calculate edge and corner window IDs based on the main window ID and app config
+calculate_border_ids() {
+    local main_id="$1"
+    local app_name="$2"
+    
+    # Get app-specific offsets
+    read -r edge_offset corner_offset <<< "${APP_CONFIGS[$app_name]}"
+    
+    # Calculate edge IDs
+    edge_ids=()
+    local edge_top=$((main_id + edge_offset))
+    edge_ids+=("$edge_top")
+    for ((i=1; i<4; i++)); do
+        edge_ids+=("$((edge_top + i * BORDER_INCREMENT))")
+    done
+    
+    # Calculate corner IDs
+    corner_ids=()
+    local corner_first=$((main_id + corner_offset))
+    corner_ids+=("$corner_first")
+    for ((i=1; i<4; i++)); do
+        corner_ids+=("$((corner_first + i * BORDER_INCREMENT))")
+    done
+}
+
+# Check if window exists and is valid
+window_exists() {
+    local win_id="$1"
+    xwininfo -id "$win_id" &>/dev/null
+    return $?
+}
+
+# Main function to handle window changes
+handle_window_change() {
+    local window_id="$1"
+    
+    # Skip invalid window IDs
+    if [[ "$window_id" == "0x0" ]]; then
+        return
+    fi
+    
+    # Get window properties
+    local xprop_output
+    if ! xprop_output=$(xprop -id "$window_id" 2>/dev/null); then
+        return
+    fi
+    
+    # Extract WM_CLASS value - more robust pattern matching
+    local wm_class
+    wm_class=$(echo "$xprop_output" | grep -oP 'WM_CLASS\(STRING\) = ".*", "\K[^"]*')
+    
+    # If first method fails, try alternative extraction
+    if [[ -z "$wm_class" ]]; then
+        wm_class=$(echo "$xprop_output" | grep "WM_CLASS(STRING)" | awk -F '"' '{print $(NF-1)}')
+    fi
+    
+    # Debug output
+    echo "DEBUG: Window ID: $window_id, WM_CLASS: $wm_class" >&2
+    
+    # Check if this window belongs to any of our configured applications
+    if [[ -n "$wm_class" ]] && [[ -n "${APP_CONFIGS[$wm_class]}" ]]; then
+        # Convert hex to decimal
+        current_id=$((0x${window_id#0x}))
+        current_app="$wm_class"
+        
+        calculate_border_ids "$current_id" "$current_app"
+        
+        # Check if the first edge window exists before showing
+        if window_exists "${edge_ids[0]}"; then
+            show_borders
         else
-            item1=$(xdotool search --pid "$pid" --sync)
-            unset item2
-            pids=($(pgrep linemediaplayer))
-            if [ ${#pids[@]} -ge "3" ]
-            then
-                for pid in "${pids[@]}"
-                do
-                    wids=($(xdotool search --pid "$pid" --sync))
-                    if [ ${#wids[@]} -gt "2" ]
-                    then
-                        #echo "Has Viewer id: $(echo "obase=16; ${wids[2]}" | bc)"
-                        item2=$(echo "$item2 ${wids[@]}" | xargs)
-                    fi
-                done
-            fi
-            items=$(echo "$item1 $item2" | xargs)
-            for item in $items
-            do
-                xwininfo -id "$item" > /tmp/xWinInfo & wait $!
-                if [ $? -eq "1" ]
-                then
-                    break
-                fi
-                xWinInfo=$(cat /tmp/xWinInfo)
-                mapState=$(echo "$xWinInfo" | grep "Map State")
-                if [[ $mapState == *"IsViewable"* ]]
-                then
-                    #xprop -spy -id $item _NET_WM_STATE &
-                    windows=$(echo "$windows $item" | xargs)
-                    wmState=$(xprop -id "$item" _NET_WM_STATE)
-                    if [[ $wmState == *"_NET_WM_STATE_FOCUSED"* ]]
-                    then
-                        show="$item"
-                    fi
-                fi
-            done
+            echo "WARNING: Border windows for $current_app ($current_id) not found" >&2
         fi
-    }
-    
-    # collect all edges and corners
-    # input ($address, $skip)
-    # output ($border)
-    getBorders() {
-        unset borders
-        #echo ADDRESS\($address\)
-        address=$(echo "$address" | xargs -n1 | sort -g | xargs)
-        if [ -n "$address" ]
-        then
-            #echo SKIP $skip
-            for addr in $address
-            do
-                if [ "$addr" != "$skip" ]
-                then
-                    if [[ $item2 == *$addr* ]]
-                    then
-                        #linemediaplayer
-                        edgeAndCorner=$((addr+14))
-                    else
-                        #LINE.exe
-                        edgeAndCorner=$((addr+10))
-                    fi
-                    for ((i=edgeAndCorner; i<$((edgeAndCorner+16)); i+=2))
-                    do
-                        borders=$(echo "$borders $i" | xargs)
-                    done
-                fi
-            done
-            echo $borders
-        fi
-    }
-    
-    # on changed
-    onChanged() {
-        unset addressHide
-        unset addressShow
-        if [ "$_show" != "$show" ]
-        then
-            if [ -z "$show" ]
-            then
-                addressHide=$_show
-            else
-                if [ -n "$_show" ]
-                then
-                    addressHide=$_show
-                fi
-                addressShow=$show
-            fi
-            _show=$show
-        fi
-    }
-    
-    doShowOrHide() {
-        if [ -n "$addressHide" ]
-        then
-            echo HIDE ALL
-            address=$windows
-            hideBorders=$(getBorders)
-            if [ -n "$hideBorders" ]
-            then
-                for border in $hideBorders
-                do
-                    xdotool windowunmap "$border" & wait $!
-                    if [ $? -eq "1" ]
-                    then
-                        break
-                    fi
-                done
-            fi
-        fi
-        if [ -n "$addressShow" ]
-        then
-            echo HIDE SOMES
-            address=$windows
-            skip=$addressShow
-            hideBorders=$(getBorders)
-            if [ -n "$hideBorders" ]
-            then
-                for border in $hideBorders
-                do
-                    xdotool windowunmap "$border" & wait $!
-                    if [ $? -eq "1" ]
-                    then
-                        break
-                    fi
-                done
+    else
+        # Not our window, hide borders if we have a current ID
+        if [[ $current_id -ne 0 ]]; then
+            calculate_border_ids "$current_id" "$current_app"
+            
+            # Check if the first edge window exists before hiding
+            if window_exists "${edge_ids[0]}"; then
+                hide_borders
             fi
             
-            unset skip
-            echo SHOW "$addressShow"
-            address=$addressShow
-            showBorders=$(getBorders)
-            if [ -n "$showBorders" ]
-            then
-                for border in $showBorders
-                do
-                    xdotool windowmap "$border" & wait $!
-                    if [ $? -eq "1" ]
-                    then
-                        break
-                    fi
-                done
-            fi
+            # Reset tracking variables
+            current_id=0
+            current_app=""
         fi
-    }
-    getWindows
-    if [ $? -eq "1" ]
-    then
-        echo "No process LINE.exe running found!"
-        sleep 3
-    else
-        onChanged
-        doShowOrHide
-        sleep .5   # untight process running
+    fi
+}
+
+# Set up signal handling with cleaner shutdown
+cleanup() {
+    echo "Script terminating, cleaning up..."
+    # Hide any visible borders before exiting
+    if [[ $current_id -ne 0 ]]; then
+        calculate_border_ids "$current_id" "$current_app"
+        hide_borders
+    fi
+    exit 0
+}
+
+trap cleanup SIGINT SIGTERM
+
+# Function to log errors
+log_error() {
+    echo "ERROR: $*" >&2
+}
+
+# Check for required commands
+for cmd in xprop xdotool xwininfo; do
+    if ! command -v "$cmd" &>/dev/null; then
+        log_error "$cmd is required but not installed. Please install it first."
+        exit 1
+    fi
+done
+
+# Display configuration
+echo "Border manager started with the following configurations:"
+for app in "${!APP_CONFIGS[@]}"; do
+    read -r edge corner <<< "${APP_CONFIGS[$app]}"
+    echo "  $app: EDGE_OFFSET=$edge, CORNER_OFFSET=$corner"
+done
+
+# Monitor active window changes - fixed xprop command
+previous_window_id=""
+xprop -root -spy _NET_ACTIVE_WINDOW | while read -r line; do
+    current_window_id=$(echo "$line" | sed -n 's/^_NET_ACTIVE_WINDOW(WINDOW): window id # \(0x[0-9a-f]*\)/\1/p')
+    
+    # Only process if we have a valid window ID that's different from the previous one
+    if [[ -n "$current_window_id" && "$current_window_id" != "$previous_window_id" ]]; then
+        handle_window_change "$current_window_id"
+        previous_window_id="$current_window_id"
     fi
 done
